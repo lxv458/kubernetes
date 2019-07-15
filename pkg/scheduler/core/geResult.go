@@ -28,30 +28,48 @@ func main() {
     var p_cpu string = "50"
     var p_mem string = "300"
 
+    // init a list
     Nodes := python.PyList_New(0)
 
     // replace the condition with the nodes list, can use range
+    // process nodeinfo to store them in a list
     for i := 1; i < 3; i++ {
-        Args := python.PyTuple_New(5)
-        python.PyTuple_SetItem(Args, 0, PyStr(n_name))
-        python.PyTuple_SetItem(Args, 1, PyStr(n_cpu))
-        python.PyTuple_SetItem(Args, 2, PyStr(n_mem))
-        python.PyTuple_SetItem(Args, 3, PyStr(n_pnum))
-        python.PyTuple_SetItem(Args, 4, Nodes)
-
-        transformDataFormat := hello.GetAttrString("transformDataFormat")
-        Nodes = transformDataFormat.Call(Args, python.Py_None)
+        Nodes = ProcessNode(n_name, n_cpu, n_mem, n_pnum, hello, Nodes)
     }
+    
     fmt.Printf("[CALL] transformDataFormat('NodeList') = %s\n", Nodes)
 
+    // processed by the ranker and get the selected node's name
+    NodeName := ProcessByRanker(p_cpu, p_mem, hello, Nodes)
+    fmt.Printf("[CALL] transformDataFormat('SelectedNodeName') = %s\n", GoStr(NodeName))
+}
+
+func ProcessNode(n_name string, n_cpu string, n_mem string, n_pnum string, hello *python.PyObject, nodes *python.PyObject) (*python.PyObject) {
+    // set parameters to a tuple
+    NArgs := python.PyTuple_New(5)
+    python.PyTuple_SetItem(NArgs, 0, PyStr(n_name))
+    python.PyTuple_SetItem(NArgs, 1, PyStr(n_cpu))
+    python.PyTuple_SetItem(NArgs, 2, PyStr(n_mem))
+    python.PyTuple_SetItem(NArgs, 3, PyStr(n_pnum))
+    python.PyTuple_SetItem(NArgs, 4, nodes)
+
+    // get func name and call it
+    transformDataFormat := hello.GetAttrString("transformDataFormat")
+    nodes = transformDataFormat.Call(NArgs, python.Py_None)
+    return nodes
+}
+
+func ProcessByRanker(p_cpu string, p_mem string, hello *python.PyObject, nodes *python.PyObject) (*python.PyObject) {
+    // set parameters to a tuple
     RArgs := python.PyTuple_New(3)
     python.PyTuple_SetItem(RArgs, 0, PyStr(p_cpu))
     python.PyTuple_SetItem(RArgs, 1, PyStr(p_mem))
-    python.PyTuple_SetItem(RArgs, 2, Nodes)
+    python.PyTuple_SetItem(RArgs, 2, nodes)
 
+    // get func name and call it
     RankNodesWithModel := hello.GetAttrString("RankNodesWithModel")
     NodeName := RankNodesWithModel.Call(RArgs, python.Py_None)
-    fmt.Printf("[CALL] transformDataFormat('SelectedNodeName') = %s\n", GoStr(NodeName))
+    return NodeName
 }
 
 // ImportModule will import python module from given directory
