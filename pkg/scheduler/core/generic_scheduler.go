@@ -47,6 +47,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/util"
 	"k8s.io/kubernetes/pkg/scheduler/volumebinder"
 	utiltrace "k8s.io/utils/trace"
+	"github.com/sbinet/go-python" // Xue add this
 )
 
 const (
@@ -197,7 +198,9 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 	metrics.DeprecatedSchedulingAlgorithmPredicateEvaluationDuration.Observe(metrics.SinceInMicroseconds(startPredicateEvalTime))
 	metrics.SchedulingLatency.WithLabelValues(metrics.PredicateEvaluation).Observe(metrics.SinceInSeconds(startPredicateEvalTime))
 
-	trace.Step("Prioritizing")
+	// Xue commented on this
+	// trace.Step("Prioritizing")
+	trace.Step("Selecting with Ranker")
 	startPriorityEvalTime := time.Now()
 	// When only one node after predicate, just use it.
 	if len(filteredNodes) == 1 {
@@ -210,8 +213,13 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 		}, nil
 	}
 
-	metaPrioritiesInterface := g.priorityMetaProducer(pod, g.cachedNodeInfoMap)
-	priorityList, err := PrioritizeNodes(pod, g.cachedNodeInfoMap, metaPrioritiesInterface, g.prioritizers, filteredNodes, g.extenders)
+	// Xue commented on this
+	// metaPrioritiesInterface := g.priorityMetaProducer(pod, g.nodeInfoSnapshot.NodeInfoMap)
+	// priorityList, err := PrioritizeNodes(pod, g.nodeInfoSnapshot.NodeInfoMap, metaPrioritiesInterface, g.prioritizers, filteredNodes, g.extenders)
+
+	// Xue adds the code
+	selectedhostname, err := FindNodeWithRanker(pod, filteredNodes, g.nodeInfoSnapshot.NodeInfoMap)
+
 	if err != nil {
 		return result, err
 	}
@@ -219,11 +227,14 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 	metrics.DeprecatedSchedulingAlgorithmPriorityEvaluationDuration.Observe(metrics.SinceInMicroseconds(startPriorityEvalTime))
 	metrics.SchedulingLatency.WithLabelValues(metrics.PriorityEvaluation).Observe(metrics.SinceInSeconds(startPriorityEvalTime))
 
-	trace.Step("Selecting host")
+	// Xue commented on this
+	// trace.Step("Selecting host")
+	// host, err := g.selectHost(priorityList)
 
-	host, err := g.selectHost(priorityList)
 	return ScheduleResult{
-		SuggestedHost:  host,
+		// Xue commented on this
+		// SuggestedHost:  host,
+		SuggestedHost:  selectedhostname,
 		EvaluatedNodes: len(filteredNodes) + len(failedPredicateMap),
 		FeasibleNodes:  len(filteredNodes),
 	}, err
@@ -632,6 +643,82 @@ func podFitsOnNode(
 	}
 
 	return len(failedPredicates) == 0, failedPredicates, nil
+}
+
+// Xue write this code
+func FindNodeWithRanker(pod *v1.Pod, nodes []*v1.Node, nodeNameToInfo map[string]*schedulernodeinfo.NodeInfo) (string, error) {
+	errPy := python.Initialize()
+	if errPy != nil {
+		panic(errPy.Error())
+	}
+
+	// the path to the python file
+	hello := ImportModule("/usr/lib", "hello")
+	//fmt.Printf("[MODULE] repr(hello) = %s\n", GoStr(hello.Repr()))
+
+	var GoStr = python.PyString_AS_STRING
+
+	// init a list to store nodes
+	Nodes := python.PyList_New(0)
+
+	// replace the condition with the nodes list, can use range
+	// process nodeinfo to store them in a list
+	for _, node := range nodes {
+		nodeInfo := nodeNameToInfo[node.Name]
+		allocatable := nodeInfo.AllocatableResource()
+		Nodes = ProcessNode(node.Name, allocatable.MilliCPU, allocatable.Memory, nodeInfo.AllowedPodNumber(), hello, Nodes)
+	}
+	//fmt.Printf("[CALL] transformDataFormat('NodeList') = %s\n", Nodes)
+
+	// processed by the ranker and get the selected node's name
+	var podRequest *schedulernodeinfo.Resource
+	podRequest = GetResourceRequest(pod)
+	NodeName := ProcessByRanker(podRequest.MilliCPU, podRequest.Memory, hello, Nodes)
+	//fmt.Printf("[CALL] transformDataFormat('SelectedNodeName') = %s\n", GoStr(NodeName))
+	nodename := GoStr(NodeName)
+	return nodename, nil
+}
+
+// Xue write this code
+func ProcessNode(n_name string, n_cpu string, n_mem string, n_pnum string, hello *python.PyObject, nodes *python.PyObject) (*python.PyObject) {
+	var PyStr = python.PyString_FromString
+	// set parameters to a tuple
+	NArgs := python.PyTuple_New(5)
+	python.PyTuple_SetItem(NArgs, 0, PyStr(n_name))
+	python.PyTuple_SetItem(NArgs, 1, PyStr(n_cpu))
+	python.PyTuple_SetItem(NArgs, 2, PyStr(n_mem))
+	python.PyTuple_SetItem(NArgs, 3, PyStr(n_pnum))
+	python.PyTuple_SetItem(NArgs, 4, nodes)
+
+	// get func name and call it
+	transformDataFormat := hello.GetAttrString("transformDataFormat")
+	nodes = transformDataFormat.Call(NArgs, python.Py_None)
+	return nodes
+}
+
+// Xue write this code
+func ProcessByRanker(p_cpu string, p_mem string, hello *python.PyObject, nodes *python.PyObject) (*python.PyObject) {
+	var PyStr = python.PyString_FromString
+	// set parameters to a tuple
+	RArgs := python.PyTuple_New(3)
+	python.PyTuple_SetItem(RArgs, 0, PyStr(p_cpu))
+	python.PyTuple_SetItem(RArgs, 1, PyStr(p_mem))
+	python.PyTuple_SetItem(RArgs, 2, nodes)
+
+	// get func name and call it
+	RankNodesWithModel := hello.GetAttrString("RankNodesWithModel")
+	NodeName := RankNodesWithModel.Call(RArgs, python.Py_None)
+	return NodeName
+}
+
+// Xue write this code
+// ImportModule will import python module from given directory
+func ImportModule(dir, name string) *python.PyObject {
+	var PyStr = python.PyString_FromString
+	sysModule := python.PyImport_ImportModule("sys") // import sys
+	path := sysModule.GetAttrString("path")                    // path = sys.path
+	python.PyList_Insert(path, 0, PyStr(dir))                     // path.insert(0, dir)
+	return python.PyImport_ImportModule(name)            // return __import__(name)
 }
 
 // PrioritizeNodes prioritizes the nodes by running the individual priority functions in parallel.
