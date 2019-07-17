@@ -15,6 +15,9 @@
 # This file creates a standard build environment for building cross
 # platform go binary for the architecture kubernetes cares about.
 
+# Xue add python2.7
+FROM python:2.7
+
 FROM golang:1.11.5
 
 ENV GOARM 7
@@ -66,10 +69,30 @@ RUN mkdir $TMPDIR \
   && chmod a+rwx $TMPDIR \
   && chmod o+t $TMPDIR
 
+# Xue add apt-get install pkg-config and python-dev
+RUN apt-get update \
+  && apt-get install -y apt-utils \
+  && apt-get install -y pkg-config \
+  && apt-get install -y python-dev \
+  && apt-get install -y python-pip \
+  && apt-get clean
+
+# Xue install sklearn, xgboost
+RUN pip install numpy scipy scikit-learn \
+  && pip install xgboost
+
+# Xue add go get github.com/sbinet/go-python
 # Get the code coverage tool and goimports
 RUN go get golang.org/x/tools/cmd/cover \
            golang.org/x/tools/cmd/goimports \
     && go clean -cache
+
+# Xue copy github.com/sbinet/go-python to GOPATH
+ADD ./xueleng.pickle.dat /usr/lib
+ADD ./hello.py /usr/lib
+RUN mkdir -p /go/src/github.com/sbinet/go-python
+ADD ./github.com/sbinet/go-python/ /go/src/github.com/sbinet/go-python
+ADD ./python-2.7.pc /usr/lib/pkgconfig
 
 # Download and symlink etcd. We need this for our integration tests.
 RUN export ETCD_VERSION=v3.2.24; \
