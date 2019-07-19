@@ -88,7 +88,7 @@ RUN go get golang.org/x/tools/cmd/cover \
     && go clean -cache
 
 # Xue copy github.com/sbinet/go-python to GOPATH
-ADD ./xueleng.pickle.dat /usr/lib
+ADD ./xuelengmillion.pickle.dat /usr/lib
 ADD ./hello.py /usr/lib
 RUN mkdir -p /go/src/github.com/sbinet/go-python
 ADD ./github.com/sbinet/go-python/ /go/src/github.com/sbinet/go-python
